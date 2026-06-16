@@ -1,13 +1,13 @@
 from datetime import datetime, timezone
 from flask import render_template, flash, redirect, url_for, request, g, \
-    current_app
+    current_app, abort
 from flask_login import current_user, login_required
 from flask_babel import _, get_locale
 import sqlalchemy as sa
 from langdetect import detect, LangDetectException
 from app import db
 from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, \
-    MessageForm
+    MessageForm, EditPostForm
 from app.models import User, Post, Message, Notification
 from app.translate import translate
 from app.main import bp
@@ -109,6 +109,53 @@ def edit_profile():
         form.about_me.data = current_user.about_me
     return render_template('edit_profile.html', title=_('Edit Profile'),
                            form=form)
+
+
+@bp.route('/edit_post/<int:id>', methods=['GET', 'POST'])
+@login_required
+def edit_post(id):
+    post = db.session.get(Post, id)
+    if post is None:
+        flash(_('Post not found.'))
+        return redirect(url_for('main.index'))
+    if post.author != current_user:
+        flash(_('You do not have permission to edit this post.'))
+        return redirect(url_for('main.index'))
+    form = EditPostForm()
+    if form.validate_on_submit():
+        try:
+            language = detect(form.post.data)
+        except LangDetectException:
+            language = ''
+        post.body = form.post.data
+        post.language = language
+        db.session.commit()
+        flash(_('Your changes have been saved.'))
+        return redirect(url_for('main.index'))
+    elif request.method == 'GET':
+        form.post.data = post.body
+    return render_template('edit_post.html', title=_('Edit Post'), form=form,
+                           post=post)
+
+
+@bp.route('/delete_post/<int:id>', methods=['POST'])
+@login_required
+def delete_post(id):
+    post = db.session.get(Post, id)
+    if post is None:
+        flash(_('Post not found.'))
+        return redirect(url_for('main.index'))
+    if post.author != current_user:
+        flash(_('You do not have permission to delete this post.'))
+        return redirect(url_for('main.index'))
+    db.session.delete(post)
+    db.session.commit()
+    flash(_('Your post has been deleted.'))
+    # Redirect back to the referring page, or index as fallback
+    referrer = request.referrer
+    if referrer:
+        return redirect(referrer)
+    return redirect(url_for('main.index'))
 
 
 @bp.route('/follow/<username>', methods=['POST'])

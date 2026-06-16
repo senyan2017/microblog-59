@@ -36,6 +36,12 @@ class PostForm(FlaskForm):
     submit = SubmitField(_l('Submit'))
 
 
+class EditPostForm(FlaskForm):
+    post = TextAreaField(_l('Say something'), validators=[
+        DataRequired(), Length(min=1, max=140)])
+    submit = SubmitField(_l('Save'))
+
+
 class SearchForm(FlaskForm):
     q = StringField(_l('Search'), validators=[DataRequired()])
 

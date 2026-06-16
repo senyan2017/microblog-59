@@ -25,6 +25,17 @@
                                 '{{ g.locale }}');">{{ _('Translate') }}</a>
                 </span>
                 {% endif %}
+                {% if current_user.is_authenticated and post.author == current_user %}
+                <br><br>
+                <span class="d-inline-flex gap-2">
+                    <a href="{{ url_for('main.edit_post', id=post.id) }}" class="btn btn-outline-primary btn-sm">{{ _('Edit') }}</a>
+                    <form action="{{ url_for('main.delete_post', id=post.id) }}" method="post" class="d-inline"
+                          onsubmit="return confirm('{{ _('Are you sure you want to delete this post?') }}');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <button type="submit" class="btn btn-outline-danger btn-sm">{{ _('Delete') }}</button>
+                    </form>
+                </span>
+                {% endif %}
             </td>
         </tr>
     </table>

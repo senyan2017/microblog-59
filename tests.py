@@ -10,6 +10,8 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite://'
     ELASTICSEARCH_URL = None
+    WTF_CSRF_ENABLED = False
+    REDIS_URL = 'redis://localhost:6379/0'
 
 
 class UserModelCase(unittest.TestCase):
@@ -104,3 +106,153 @@ class UserModelCase(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class PostRouteCase(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app(TestConfig)
+        self.app_context = self.app.app_context()
+        self.app_context.push()
+        db.create_all()
+        self.client = self.app.test_client()
+        # Create two users
+        u1 = User(username='alice', email='alice@example.com')
+        u1.set_password('cat')
+        u2 = User(username='bob', email='bob@example.com')
+        u2.set_password('dog')
+        db.session.add_all([u1, u2])
+        db.session.commit()
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        self.app_context.pop()
+
+    def _login(self, username, password):
+        return self.client.post('/auth/login', data={
+            'username': username,
+            'password': password,
+        }, follow_redirects=True)
+
+    def _logout(self):
+        return self.client.get('/auth/logout', follow_redirects=True)
+
+    def _create_post(self, author_username, body):
+        author = db.session.scalar(
+            db.select(User).where(User.username == author_username))
+        post = Post(body=body, author=author)
+        db.session.add(post)
+        db.session.commit()
+        return post
+
+    def test_edit_post_by_author(self):
+        """Author can edit their own post."""
+        post = self._create_post('alice', 'original body')
+        self._login('alice', 'cat')
+        response = self.client.post(f'/edit_post/{post.id}', data={
+            'post': 'updated body',
+        }, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        db.session.expire_all()
+        updated = db.session.get(Post, post.id)
+        self.assertEqual(updated.body, 'updated body')
+
+    def test_edit_post_by_other_user_forbidden(self):
+        """Non-author cannot edit someone else's post."""
+        post = self._create_post('alice', 'alice post')
+        self._login('bob', 'dog')
+        response = self.client.post(f'/edit_post/{post.id}', data={
+            'post': 'hacked body',
+        }, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        # Body should be unchanged
+        db.session.expire_all()
+        unchanged = db.session.get(Post, post.id)
+        self.assertEqual(unchanged.body, 'alice post')
+
+    def test_edit_post_validation_too_long(self):
+        """Edit form rejects body exceeding 140 chars."""
+        post = self._create_post('alice', 'short')
+        self._login('alice', 'cat')
+        response = self.client.post(f'/edit_post/{post.id}', data={
+            'post': 'x' * 141,
+        }, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        # Body should be unchanged
+        db.session.expire_all()
+        unchanged = db.session.get(Post, post.id)
+        self.assertEqual(unchanged.body, 'short')
+
+    def test_edit_post_validation_empty(self):
+        """Edit form rejects empty body."""
+        post = self._create_post('alice', 'short')
+        self._login('alice', 'cat')
+        response = self.client.post(f'/edit_post/{post.id}', data={
+            'post': '',
+        }, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        db.session.expire_all()
+        unchanged = db.session.get(Post, post.id)
+        self.assertEqual(unchanged.body, 'short')
+
+    def test_edit_nonexistent_post(self):
+        """Editing a non-existent post redirects gracefully."""
+        self._login('alice', 'cat')
+        response = self.client.get('/edit_post/9999', follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Post not found', response.data)
+
+    def test_delete_post_by_author(self):
+        """Author can delete their own post."""
+        post = self._create_post('alice', 'delete me')
+        post_id = post.id
+        self._login('alice', 'cat')
+        response = self.client.post(f'/delete_post/{post_id}',
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(db.session.get(Post, post_id))
+
+    def test_delete_post_by_other_user_forbidden(self):
+        """Non-author cannot delete someone else's post."""
+        post = self._create_post('alice', 'keep me')
+        post_id = post.id
+        self._login('bob', 'dog')
+        response = self.client.post(f'/delete_post/{post_id}',
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        # Post should still exist
+        self.assertIsNotNone(db.session.get(Post, post_id))
+
+    def test_delete_nonexistent_post(self):
+        """Deleting a non-existent post redirects gracefully."""
+        self._login('alice', 'cat')
+        response = self.client.post('/delete_post/9999',
+                                    follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Post not found', response.data)
+
+    def test_edit_requires_login(self):
+        """Unauthenticated users are redirected to login."""
+        post = self._create_post('alice', 'test')
+        response = self.client.get(f'/edit_post/{post.id}')
+        self.assertEqual(response.status_code, 302)
+
+    def test_delete_requires_login(self):
+        """Unauthenticated users are redirected to login."""
+        post = self._create_post('alice', 'test')
+        response = self.client.post(f'/delete_post/{post.id}')
+        self.assertEqual(response.status_code, 302)
+
+    def test_post_count_after_delete(self):
+        """Post count decreases after deletion."""
+        post1 = self._create_post('alice', 'first')
+        post2 = self._create_post('alice', 'second')
+        alice = db.session.scalar(
+            db.select(User).where(User.username == 'alice'))
+        self.assertEqual(alice.posts_count(), 2)
+        self._login('alice', 'cat')
+        self.client.post(f'/delete_post/{post1.id}', follow_redirects=True)
+        db.session.expire_all()
+        self.assertEqual(alice.posts_count(), 1)
+        self.assertIsNone(db.session.get(Post, post1.id))
+        self.assertIsNotNone(db.session.get(Post, post2.id))
