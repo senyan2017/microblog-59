@@ -141,6 +141,8 @@
       }
       document.addEventListener('DOMContentLoaded', initialize_popovers);
 
+      // --- Notifications -----------------------------------------------
+      // DOM updaters: each applies the payload of one kind of notification.
       function set_message_count(n) {
         const count = document.getElementById('message_count');
         count.innerText = n;
@@ -154,6 +156,25 @@
         }
       }
 
+      // Maps a notification name to the handler that consumes its payload.
+      // To support a new kind of notification, add an entry here instead of
+      // editing the polling loop below.
+      const notificationHandlers = {
+        unread_message_count(data) {
+          set_message_count(data);
+        },
+        task_progress(data) {
+          set_task_progress(data.task_id, data.progress);
+        },
+      };
+
+      function handle_notification(notification) {
+        const handler = notificationHandlers[notification.name];
+        if (handler) {
+          handler(notification.data);
+        }
+      }
+
       {% if current_user.is_authenticated %}
       function initialize_notifications() {
         let since = 0;
@@ -161,15 +182,7 @@
           const response = await fetch('{{ url_for('main.notifications') }}?since=' + since);
           const notifications = await response.json();
           for (let i = 0; i < notifications.length; i++) {
-            switch (notifications[i].name) {
-              case 'unread_message_count':
-                set_message_count(notifications[i].data);
-                break;
-              case 'task_progress':
-                set_task_progress(notifications[i].data.task_id,
-                    notifications[i].data.progress);
-                break;
-            }
+            handle_notification(notifications[i]);
             since = notifications[i].timestamp;
           }
         }, 10000);

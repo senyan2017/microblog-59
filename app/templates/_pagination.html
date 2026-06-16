@@ -1,0 +1,19 @@
+{# Reusable previous/next pagination control shared by every list page.
+   Pass the already-translated newer/older labels so each page keeps its own
+   wording (e.g. "Older posts" vs "Older messages"). #}
+{% macro render_pagination(prev_url, next_url, newer_label, older_label) %}
+    <nav aria-label="Post navigation">
+        <ul class="pagination">
+            <li class="page-item{% if not prev_url %} disabled{% endif %}">
+                <a class="page-link" href="{{ prev_url }}">
+                    <span aria-hidden="true">&larr;</span> {{ newer_label }}
+                </a>
+            </li>
+            <li class="page-item{% if not next_url %} disabled{% endif %}">
+                <a class="page-link" href="{{ next_url }}">
+                    {{ older_label }} <span aria-hidden="true">&rarr;</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+{% endmacro %}

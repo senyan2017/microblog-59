@@ -11,6 +11,7 @@ from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, \
 from app.models import User, Post, Message, Notification
 from app.translate import translate
 from app.main import bp
+from app.main.pagination import paginate, paginate_search
 
 
 @bp.before_app_request
@@ -38,52 +39,32 @@ def index():
         db.session.commit()
         flash(_('Your post is now live!'))
         return redirect(url_for('main.index'))
-    page = request.args.get('page', 1, type=int)
-    posts = db.paginate(current_user.following_posts(), page=page,
-                        per_page=current_app.config['POSTS_PER_PAGE'],
-                        error_out=False)
-    next_url = url_for('main.index', page=posts.next_num) \
-        if posts.has_next else None
-    prev_url = url_for('main.index', page=posts.prev_num) \
-        if posts.has_prev else None
+    page = paginate(current_user.following_posts(), 'main.index')
     return render_template('index.html', title=_('Home'), form=form,
-                           posts=posts.items, next_url=next_url,
-                           prev_url=prev_url)
+                           posts=page.items, next_url=page.next_url,
+                           prev_url=page.prev_url)
 
 
 @bp.route('/explore')
 @login_required
 def explore():
-    page = request.args.get('page', 1, type=int)
     query = sa.select(Post).order_by(Post.timestamp.desc())
-    posts = db.paginate(query, page=page,
-                        per_page=current_app.config['POSTS_PER_PAGE'],
-                        error_out=False)
-    next_url = url_for('main.explore', page=posts.next_num) \
-        if posts.has_next else None
-    prev_url = url_for('main.explore', page=posts.prev_num) \
-        if posts.has_prev else None
+    page = paginate(query, 'main.explore')
     return render_template('index.html', title=_('Explore'),
-                           posts=posts.items, next_url=next_url,
-                           prev_url=prev_url)
+                           posts=page.items, next_url=page.next_url,
+                           prev_url=page.prev_url)
 
 
 @bp.route('/user/<username>')
 @login_required
 def user(username):
     user = db.first_or_404(sa.select(User).where(User.username == username))
-    page = request.args.get('page', 1, type=int)
     query = user.posts.select().order_by(Post.timestamp.desc())
-    posts = db.paginate(query, page=page,
-                        per_page=current_app.config['POSTS_PER_PAGE'],
-                        error_out=False)
-    next_url = url_for('main.user', username=user.username,
-                       page=posts.next_num) if posts.has_next else None
-    prev_url = url_for('main.user', username=user.username,
-                       page=posts.prev_num) if posts.has_prev else None
+    page = paginate(query, 'main.user', username=user.username)
     form = EmptyForm()
-    return render_template('user.html', user=user, posts=posts.items,
-                           next_url=next_url, prev_url=prev_url, form=form)
+    return render_template('user.html', user=user, posts=page.items,
+                           next_url=page.next_url, prev_url=page.prev_url,
+                           form=form)
 
 
 @bp.route('/user/<username>/popup')
@@ -167,15 +148,13 @@ def translate_text():
 def search():
     if not g.search_form.validate():
         return redirect(url_for('main.explore'))
-    page = request.args.get('page', 1, type=int)
-    posts, total = Post.search(g.search_form.q.data, page,
+    page_num = request.args.get('page', 1, type=int)
+    posts, total = Post.search(g.search_form.q.data, page_num,
                                current_app.config['POSTS_PER_PAGE'])
-    next_url = url_for('main.search', q=g.search_form.q.data, page=page + 1) \
-        if total > page * current_app.config['POSTS_PER_PAGE'] else None
-    prev_url = url_for('main.search', q=g.search_form.q.data, page=page - 1) \
-        if page > 1 else None
-    return render_template('search.html', title=_('Search'), posts=posts,
-                           next_url=next_url, prev_url=prev_url)
+    page = paginate_search(posts, total, page_num, 'main.search',
+                           q=g.search_form.q.data)
+    return render_template('search.html', title=_('Search'), posts=page.items,
+                           next_url=page.next_url, prev_url=page.prev_url)
 
 
 @bp.route('/send_message/<recipient>', methods=['GET', 'POST'])
@@ -202,18 +181,11 @@ def messages():
     current_user.last_message_read_time = datetime.now(timezone.utc)
     current_user.add_notification('unread_message_count', 0)
     db.session.commit()
-    page = request.args.get('page', 1, type=int)
     query = current_user.messages_received.select().order_by(
         Message.timestamp.desc())
-    messages = db.paginate(query, page=page,
-                           per_page=current_app.config['POSTS_PER_PAGE'],
-                           error_out=False)
-    next_url = url_for('main.messages', page=messages.next_num) \
-        if messages.has_next else None
-    prev_url = url_for('main.messages', page=messages.prev_num) \
-        if messages.has_prev else None
-    return render_template('messages.html', messages=messages.items,
-                           next_url=next_url, prev_url=prev_url)
+    page = paginate(query, 'main.messages')
+    return render_template('messages.html', messages=page.items,
+                           next_url=page.next_url, prev_url=page.prev_url)
 
 
 @bp.route('/export_posts')
