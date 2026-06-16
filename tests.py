@@ -10,6 +10,8 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite://'
     ELASTICSEARCH_URL = None
+    WTF_CSRF_ENABLED = False
+    SERVER_NAME = None
 
 
 class UserModelCase(unittest.TestCase):
@@ -100,6 +102,95 @@ class UserModelCase(unittest.TestCase):
         self.assertEqual(f2, [p2, p3])
         self.assertEqual(f3, [p3, p4])
         self.assertEqual(f4, [p4])
+
+
+class PostRoutesCase(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app(TestConfig)
+        self.app_context = self.app.app_context()
+        self.app_context.push()
+        db.create_all()
+        self.client = self.app.test_client()
+
+        self.owner = User(username='john', email='john@example.com')
+        self.owner.set_password('cat')
+        self.other = User(username='susan', email='susan@example.com')
+        self.other.set_password('dog')
+        db.session.add_all([self.owner, self.other])
+        db.session.commit()
+
+        post = Post(body='original body', author=self.owner)
+        db.session.add(post)
+        db.session.commit()
+        self.post_id = post.id
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        self.app_context.pop()
+
+    def login(self, username, password):
+        return self.client.post('/auth/login', data={
+            'username': username, 'password': password},
+            follow_redirects=True)
+
+    def test_owner_can_edit_own_post(self):
+        self.login('john', 'cat')
+        response = self.client.post(
+            f'/edit_post/{self.post_id}', data={'post': 'edited body'},
+            follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        post = db.session.get(Post, self.post_id)
+        self.assertEqual(post.body, 'edited body')
+
+    def test_cannot_edit_others_post(self):
+        self.login('susan', 'dog')
+        response = self.client.post(
+            f'/edit_post/{self.post_id}', data={'post': 'hacked body'})
+        # Redirected away without touching the post.
+        self.assertEqual(response.status_code, 302)
+        post = db.session.get(Post, self.post_id)
+        self.assertEqual(post.body, 'original body')
+
+    def test_edit_rejects_invalid_body(self):
+        self.login('john', 'cat')
+        response = self.client.post(
+            f'/edit_post/{self.post_id}', data={'post': ''})
+        # Form is invalid, page is re-rendered instead of saving bad data.
+        self.assertEqual(response.status_code, 200)
+        post = db.session.get(Post, self.post_id)
+        self.assertEqual(post.body, 'original body')
+
+    def test_edit_too_long_body_rejected(self):
+        self.login('john', 'cat')
+        response = self.client.post(
+            f'/edit_post/{self.post_id}', data={'post': 'x' * 200})
+        self.assertEqual(response.status_code, 200)
+        post = db.session.get(Post, self.post_id)
+        self.assertEqual(post.body, 'original body')
+
+    def test_edit_missing_post_returns_404(self):
+        self.login('john', 'cat')
+        response = self.client.get('/edit_post/9999')
+        self.assertEqual(response.status_code, 404)
+
+    def test_owner_can_delete_own_post(self):
+        self.login('john', 'cat')
+        response = self.client.post(
+            f'/delete_post/{self.post_id}', follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(db.session.get(Post, self.post_id))
+
+    def test_cannot_delete_others_post(self):
+        self.login('susan', 'dog')
+        response = self.client.post(f'/delete_post/{self.post_id}')
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNotNone(db.session.get(Post, self.post_id))
+
+    def test_delete_missing_post_returns_404(self):
+        self.login('john', 'cat')
+        response = self.client.post('/delete_post/9999')
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == '__main__':

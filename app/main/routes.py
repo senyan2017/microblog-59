@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from flask import render_template, flash, redirect, url_for, request, g, \
-    current_app
+    current_app, abort
 from flask_login import current_user, login_required
 from flask_babel import _, get_locale
 import sqlalchemy as sa
@@ -20,6 +21,22 @@ def before_request():
         db.session.commit()
         g.search_form = SearchForm()
     g.locale = str(get_locale())
+
+
+@bp.app_context_processor
+def inject_post_forms():
+    # Expose a CSRF-protected form so the delete buttons inside the shared
+    # _post.html card work on every page that lists posts.
+    return {'delete_form': EmptyForm()}
+
+
+def _safe_redirect_target(default):
+    # Only honor a "next" target that points within this site to avoid open
+    # redirects, falling back to a sensible default otherwise.
+    next_page = request.args.get('next')
+    if not next_page or urlsplit(next_page).netloc != '':
+        return default
+    return next_page
 
 
 @bp.route('/', methods=['GET', 'POST'])
@@ -66,6 +83,59 @@ def explore():
     return render_template('index.html', title=_('Explore'),
                            posts=posts.items, next_url=next_url,
                            prev_url=prev_url)
+
+
+@bp.route('/edit_post/<int:post_id>', methods=['GET', 'POST'])
+@login_required
+def edit_post(post_id):
+    post = db.session.get(Post, post_id)
+    if post is None:
+        abort(404)
+    if post.author != current_user:
+        flash(_('You can only edit your own posts.'))
+        return redirect(_safe_redirect_target(url_for('main.index')))
+    form = PostForm()
+    next_page = request.args.get('next')
+    if form.validate_on_submit():
+        post.body = form.post.data
+        try:
+            post.language = detect(form.post.data)
+        except LangDetectException:
+            post.language = ''
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            flash(_('Could not save your changes, please try again.'))
+            return render_template('edit_post.html', title=_('Edit Post'),
+                                   form=form, post=post, next_page=next_page)
+        flash(_('Your changes have been saved.'))
+        return redirect(_safe_redirect_target(url_for('main.index')))
+    elif request.method == 'GET':
+        form.post.data = post.body
+    return render_template('edit_post.html', title=_('Edit Post'), form=form,
+                           post=post, next_page=next_page)
+
+
+@bp.route('/delete_post/<int:post_id>', methods=['POST'])
+@login_required
+def delete_post(post_id):
+    post = db.session.get(Post, post_id)
+    if post is None:
+        abort(404)
+    if post.author != current_user:
+        flash(_('You can only delete your own posts.'))
+        return redirect(_safe_redirect_target(url_for('main.index')))
+    form = EmptyForm()
+    if form.validate_on_submit():
+        try:
+            db.session.delete(post)
+            db.session.commit()
+            flash(_('Your post has been deleted.'))
+        except Exception:
+            db.session.rollback()
+            flash(_('Could not delete the post, please try again.'))
+    return redirect(_safe_redirect_target(url_for('main.index')))
 
 
 @bp.route('/user/<username>')
