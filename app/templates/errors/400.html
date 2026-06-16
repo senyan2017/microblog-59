@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <h1>{{ _('Bad Request') }}</h1>
+    <p>{{ _('The request could not be understood by the server. Please check your input and try again.') }}</p>
+    <p><a href="{{ url_for('main.index') }}">{{ _('Back') }}</a></p>
+{% endblock %}

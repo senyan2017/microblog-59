@@ -11,6 +11,7 @@ from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, \
 from app.models import User, Post, Message, Notification
 from app.translate import translate
 from app.main import bp
+from app.validation import get_json_data, require_string
 
 
 @bp.before_app_request
@@ -156,10 +157,11 @@ def unfollow(username):
 @bp.route('/translate', methods=['POST'])
 @login_required
 def translate_text():
-    data = request.get_json()
-    return {'text': translate(data['text'],
-                              data['source_language'],
-                              data['dest_language'])}
+    data = get_json_data()
+    text = require_string(data, 'text')
+    source_language = require_string(data, 'source_language')
+    dest_language = require_string(data, 'dest_language')
+    return {'text': translate(text, source_language, dest_language)}
 
 
 @bp.route('/search')
@@ -167,12 +169,15 @@ def translate_text():
 def search():
     if not g.search_form.validate():
         return redirect(url_for('main.explore'))
+    query_text = g.search_form.q.data.strip()
+    if not query_text:
+        return redirect(url_for('main.explore'))
     page = request.args.get('page', 1, type=int)
-    posts, total = Post.search(g.search_form.q.data, page,
+    posts, total = Post.search(query_text, page,
                                current_app.config['POSTS_PER_PAGE'])
-    next_url = url_for('main.search', q=g.search_form.q.data, page=page + 1) \
+    next_url = url_for('main.search', q=query_text, page=page + 1) \
         if total > page * current_app.config['POSTS_PER_PAGE'] else None
-    prev_url = url_for('main.search', q=g.search_form.q.data, page=page - 1) \
+    prev_url = url_for('main.search', q=query_text, page=page - 1) \
         if page > 1 else None
     return render_template('search.html', title=_('Search'), posts=posts,
                            next_url=next_url, prev_url=prev_url)

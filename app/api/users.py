@@ -5,6 +5,7 @@ from app.models import User
 from app.api import bp
 from app.api.auth import token_auth
 from app.api.errors import bad_request
+from app.validation import get_json_data, require_string
 
 
 @bp.route('/users/<int:id>', methods=['GET'])
@@ -44,14 +45,13 @@ def get_following(id):
 
 @bp.route('/users', methods=['POST'])
 def create_user():
-    data = request.get_json()
-    if 'username' not in data or 'email' not in data or 'password' not in data:
-        return bad_request('must include username, email and password fields')
-    if db.session.scalar(sa.select(User).where(
-            User.username == data['username'])):
+    data = get_json_data()
+    username = require_string(data, 'username')
+    email = require_string(data, 'email')
+    require_string(data, 'password', allow_blank=True)
+    if db.session.scalar(sa.select(User).where(User.username == username)):
         return bad_request('please use a different username')
-    if db.session.scalar(sa.select(User).where(
-            User.email == data['email'])):
+    if db.session.scalar(sa.select(User).where(User.email == email)):
         return bad_request('please use a different email address')
     user = User()
     user.from_dict(data, new_user=True)
@@ -67,14 +67,15 @@ def update_user(id):
     if token_auth.current_user().id != id:
         abort(403)
     user = db.get_or_404(User, id)
-    data = request.get_json()
-    if 'username' in data and data['username'] != user.username and \
-        db.session.scalar(sa.select(User).where(
-            User.username == data['username'])):
+    data = get_json_data()
+    username = require_string(data, 'username', required=False)
+    if username is not None and username != user.username and \
+            db.session.scalar(
+                sa.select(User).where(User.username == username)):
         return bad_request('please use a different username')
-    if 'email' in data and data['email'] != user.email and \
-        db.session.scalar(sa.select(User).where(
-            User.email == data['email'])):
+    email = require_string(data, 'email', required=False)
+    if email is not None and email != user.email and db.session.scalar(
+            sa.select(User).where(User.email == email)):
         return bad_request('please use a different email address')
     user.from_dict(data, new_user=False)
     db.session.commit()

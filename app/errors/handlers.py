@@ -2,11 +2,27 @@ from flask import render_template, request
 from app import db
 from app.errors import bp
 from app.api.errors import error_response as api_error_response
+from app.validation import ValidationError
 
 
 def wants_json_response():
     return request.accept_mimetypes['application/json'] >= \
         request.accept_mimetypes['text/html']
+
+
+@bp.app_errorhandler(ValidationError)
+def validation_error(error):
+    # Request-body validation failures only come from JSON endpoints, so a
+    # readable JSON error is always the right response (no HTML fallback).
+    return api_error_response(400, error.message)
+
+
+@bp.app_errorhandler(400)
+def bad_request_error(error):
+    if wants_json_response():
+        description = getattr(error, 'description', None)
+        return api_error_response(400, description)
+    return render_template('errors/400.html'), 400
 
 
 @bp.app_errorhandler(404)

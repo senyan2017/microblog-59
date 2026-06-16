@@ -16,4 +16,4 @@ def bad_request(message):
 
 @bp.errorhandler(HTTPException)
 def handle_exception(e):
-    return error_response(e.code)
+    return error_response(e.code, getattr(e, 'description', None))
